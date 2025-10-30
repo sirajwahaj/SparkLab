@@ -1,0 +1,100 @@
+# Define the network for Spark communication
+# Uses bridge driver for isolated container networking
+networks:
+  spark-net:
+    driver: bridge
+
+services:
+  # Spark master service, coordinating the cluster
+  # Builds from local Dockerfile for custom Spark 4.0.0
+  spark-master:
+    build:
+      context: . # Use current directory for build
+      dockerfile: Dockerfile # Path to Dockerfile
+    container_name: spark-master
+    hostname: spark-master
+    user: "1001:1001" # Run as sparkuser (UID/GID 1001)
+    command: /opt/spark/sbin/start-master.sh # Start Spark master
+    ports:
+      - "7077:7077" # Spark master communication port
+      - "8080:8080" # Spark master UI
+    environment:
+      - SPARK_MODE=master
+      - SPARK_MASTER_HOST=spark-master
+      - SPARK_MASTER_PORT=7077
+      - SPARK_MASTER_WEBUI_PORT=8080 # Master UI port
+      - SPARK_LOCAL_DIR=/tmp/spark # Temporary files
+      - IVY_HOME=/home/sparkuser/.ivy2 # Ivy dependency cache
+      - HOME=/home/sparkuser # User home directory
+    volumes:
+      - ./jobs:/jobs # Mount local jobs folder
+      - spark_tmp:/tmp/spark # Persistent Spark temp directory
+      - ivy_tmp:/home/sparkuser/.ivy2 # Persistent Ivy cache
+    networks:
+      - spark-net
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8080" ] # Check master UI
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Spark worker 1, processes tasks from the master
+  spark-worker-1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: spark-worker-1
+    hostname: spark-worker-1
+    user: "1001:1001"
+    command: /opt/spark/sbin/start-worker.sh spark://spark-master:7077
+    depends_on:
+      spark-master:
+        condition: service_healthy
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_CORES=1
+      - SPARK_WORKER_MEMORY=1g
+      - SPARK_WORKER_WEBUI_PORT=8081 # Worker UI port (internal)
+      - SPARK_LOCAL_DIR=/tmp/spark
+      - IVY_HOME=/home/sparkuser/.ivy2
+      - HOME=/home/sparkuser
+    volumes:
+      - ./jobs:/jobs
+      - spark_tmp:/tmp/spark
+      - ivy_tmp:/home/sparkuser/.ivy2
+    networks:
+      - spark-net
+
+  # Spark worker 2, additional worker for parallel processing
+  spark-worker-2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: spark-worker-2
+    hostname: spark-worker-2
+    user: "1001:1001"
+    command: /opt/spark/sbin/start-worker.sh spark://spark-master:7077
+    depends_on:
+      spark-master:
+        condition: service_healthy
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_CORES=1
+      - SPARK_WORKER_MEMORY=1g
+      - SPARK_WORKER_WEBUI_PORT=8081
+      - SPARK_LOCAL_DIR=/tmp/spark
+      - IVY_HOME=/home/sparkuser/.ivy2
+      - HOME=/home/sparkuser
+    volumes:
+      - ./jobs:/jobs
+      - spark_tmp:/tmp/spark
+      - ivy_tmp:/home/sparkuser/.ivy2
+    networks:
+      - spark-net
+
+# Define persistent volumes for Spark and Ivy
+volumes:
+  spark_tmp:
+  ivy_tmp:

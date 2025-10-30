@@ -1,0 +1,99 @@
+services:
+  traefik:
+    image: traefik:v3.4
+    container_name: traefik
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command:
+      - "--providers.docker=true"
+      - "--entrypoints.web.address=:80"
+      - "--api.dashboard=true"
+      - "--accesslog=true"
+      - "--accesslog.format=json"
+      - "--providers.docker.network=proxy"
+
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.dashboard.rule=Host(`dashboard.localhost`)"
+      - "traefik.http.routers.dashboard.service=api@internal"
+    networks:
+      - proxy
+
+  spark-master:
+    build: .
+    container_name: spark-master
+    hostname: spark-master
+    environment:
+      - SPARK_MODE=master
+    ports:
+      - "8080:8080" # Spark Master UI
+      - "7077:7077" # Spark Master Port
+      - "18080:18080" # History Server
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.master.rule=Host(`master.localhost`)"
+      - "traefik.http.routers.master.entrypoints=web"
+
+    volumes:
+      - spark-logs:/opt/spark/logs/completedJobs
+      - ./jobs:/jobs
+      - ./data:/data
+      - ./Scripts/jupyterStart.sh:/usr/local/bin/jupyterStart.sh
+      - ./notebooks:/home/jovyan/work # persist notebooks
+
+    networks:
+      - proxy
+
+  spark-worker-1:
+    build: .
+    container_name: spark-worker-1
+    hostname: spark-worker-1
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+    depends_on:
+      - spark-master
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.worker.rule=Host(`worker.localhost`)"
+      - "traefik.http.routers.worker.entrypoints=web"
+
+    volumes:
+      - ./jobs:/jobs
+      - ./data:/data
+      - spark-logs:/opt/spark/logs/completedJobs
+
+    networks:
+      - proxy
+
+  spark-worker-2:
+    build: .
+    container_name: spark-worker-2
+    hostname: spark-worker-2
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+    depends_on:
+      - spark-master
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.worker2.rule=Host(`worker2.localhost`)"
+      - "traefik.http.routers.worker2.entrypoints=web"
+
+    networks:
+      - proxy
+
+    volumes:
+      - ./jobs:/jobs
+      - ./data:/data
+      - spark-logs:/opt/spark/logs/completedJobs
+
+networks:
+  proxy:
+    driver: bridge
+
+volumes:
+  spark-logs:
